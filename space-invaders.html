@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Space Invaders</title>
+<style>
+  body { background: #000; color: #0f0; text-align: center; font-family: monospace; margin: 0; }
+  canvas { background: #111; border: 2px solid #0f0; display: block; margin: 20px auto; }
+  h1 { margin: 10px 0 0; }
+</style>
+</head>
+<body>
+<h1>SPACE INVADERS</h1>
+<p>Use &larr; &rarr; to move (auto-attack enabled!)</p>
+<canvas id="game" width="600" height="500"></canvas>
+<p id="score">Score: 0</p>
+<p id="highscore">Highscore: 0</p>
+<p id="wave">Wave: 1</p>
+<p id="ability">Ability: none</p>
+<p id="lives">Lives: 3</p>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let score = 0;
+let highscore = localStorage.getItem('spaceInvadersHighscore') || 0;
+let wave = 1;
+let gameOver = false;
+
+const player = { x: 280, y: 460, w: 40, h: 20, speed: 5 };
+let bullets = [];
+let enemyBullets = [];
+let enemies = [];
+let powerups = [];
+let lives = 3;
+let enemyShootTimer = 0;
+let enemyDir = 1;
+let enemySpeed = 1;
+let fireTimer = 0;
+
+let ability = null;       // current ability name
+let abilityTimer = 0;     // frames remaining
+
+const ABILITIES = [
+  { name: 'Rapid Fire', color: '#0ff', duration: 300 },
+  { name: 'Spread Shot', color: '#f0f', duration: 300 },
+  { name: 'Triple Laser', color: '#ff0', duration: 300 },
+];
+
+// Create enemies, some carry random abilities
+function spawnWave() {
+  enemies = [];
+  enemySpeed = 1 + (wave - 1) * 0.3;
+  enemyDir = 1;
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 8; col++) {
+      let power = null;
+      if (Math.random() < 0.3) {
+        power = ABILITIES[Math.floor(Math.random() * ABILITIES.length)];
+      }
+      enemies.push({ x: 60 + col * 60, y: 40 + row * 40, w: 30, h: 20, alive: true, power });
+    }
+  }
+}
+spawnWave();
+
+document.getElementById('highscore').textContent = 'Highscore: ' + highscore;
+
+const keys = {};
+document.addEventListener('keydown', e => keys[e.code] = true);
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+function fire() {
+  const cx = player.x + player.w / 2;
+  if (ability && ability.name === 'Spread Shot') {
+    [-1, 0, 1].forEach(dx => bullets.push({ x: cx - 2, y: player.y, w: 4, h: 10, dx }));
+  } else if (ability && ability.name === 'Triple Laser') {
+    [-12, 0, 12].forEach(off => bullets.push({ x: cx - 2 + off, y: player.y, w: 4, h: 10, dx: 0 }));
+  } else {
+    bullets.push({ x: cx - 2, y: player.y, w: 4, h: 10, dx: 0 });
+  }
+}
+
+function update() {
+  if (gameOver) return;
+
+  if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+  if (keys['ArrowRight'] && player.x < canvas.width - player.w) player.x += player.speed;
+
+  // Auto attack
+  fireTimer++;
+  const rate = (ability && ability.name === 'Rapid Fire') ? 8 : 20;
+  if (fireTimer >= rate) { fire(); fireTimer = 0; }
+
+  // Ability duration
+  if (ability) {
+    abilityTimer--;
+    if (abilityTimer <= 0) {
+      ability = null;
+      document.getElementById('ability').textContent = 'Ability: none';
+    }
+  }
+
+  bullets.forEach(b => { b.y -= 7; b.x += (b.dx || 0) * 2; });
+  bullets = bullets.filter(b => b.y > 0 && b.x > 0 && b.x < canvas.width);
+
+  enemyBullets.forEach(b => b.y += 5);
+  enemyBullets = enemyBullets.filter(b => b.y < canvas.height);
+
+  // Enemies randomly shoot
+  enemyShootTimer++;
+  if (enemyShootTimer >= 40 && enemies.some(e => e.alive)) {
+    enemyShootTimer = 0;
+    const shooters = enemies.filter(e => e.alive);
+    const s = shooters[Math.floor(Math.random() * shooters.length)];
+    enemyBullets.push({ x: s.x + s.w/2 - 2, y: s.y + s.h, w: 4, h: 10 });
+  }
+
+  // Enemy bullet vs player
+  enemyBullets.forEach(b => {
+    if (b.x < player.x + player.w && b.x + b.w > player.x && b.y < player.y + player.h && b.y + b.h > player.y) {
+      b.y = canvas.height + 100;
+      lives--;
+      document.getElementById('lives').textContent = 'Lives: ' + lives;
+      if (lives <= 0) gameOver = true;
+    }
+  });
+
+  powerups.forEach(p => p.y += 3);
+  powerups = powerups.filter(p => p.y < canvas.height);
+
+  let moveDown = false;
+  enemies.forEach(e => {
+    if (!e.alive) return;
+    e.x += enemyDir * enemySpeed;
+    if (e.x <= 0 || e.x + e.w >= canvas.width) moveDown = true;
+  });
+  if (moveDown) {
+    enemyDir *= -1;
+    enemies.forEach(e => e.y += 20);
+  }
+
+  // Bullet vs enemy
+  bullets.forEach(b => {
+    enemies.forEach(e => {
+      if (e.alive && b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+        e.alive = false;
+        b.y = -100;
+        score += 10;
+        document.getElementById('score').textContent = 'Score: ' + score;
+        if (score > highscore) {
+          highscore = score;
+          document.getElementById('highscore').textContent = 'Highscore: ' + highscore;
+        }
+        if (e.power) powerups.push({ x: e.x + e.w/2 - 8, y: e.y, w: 16, h: 16, ability: e.power });
+      }
+    });
+  });
+
+  // Powerup vs player
+  powerups.forEach(p => {
+    if (p.x < player.x + player.w && p.x + p.w > player.x && p.y < player.y + player.h && p.y + p.h > player.y) {
+      ability = p.ability;
+      abilityTimer = p.ability.duration;
+      p.y = canvas.height + 100;
+      document.getElementById('ability').textContent = 'Ability: ' + ability.name;
+    }
+  });
+
+  // Check lose/win
+  enemies.forEach(e => {
+    if (e.alive && e.y + e.h >= player.y) {
+      lives--;
+      document.getElementById('lives').textContent = 'Lives: ' + lives;
+      enemies = enemies.filter(en => en.alive && en.y + en.h < player.y);
+      if (lives <= 0) gameOver = true;
+    }
+  });
+  if (enemies.every(e => !e.alive)) {
+    wave++;
+    document.getElementById('wave').textContent = 'Wave: ' + wave;
+    spawnWave();
+  }
+
+  if (gameOver) {
+    if (score > highscore) {
+      highscore = score;
+      localStorage.setItem('spaceInvadersHighscore', highscore);
+    }
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#0f0';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  ctx.fillStyle = '#ff0';
+  bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+  ctx.fillStyle = '#f0f';
+  enemyBullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+  enemies.forEach(e => {
+    if (!e.alive) return;
+    ctx.fillStyle = e.power ? '#f80' : '#f00';
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+    if (e.power) {
+      ctx.fillStyle = e.power.color;
+      ctx.fillRect(e.x + e.w/2 - 3, e.y + e.h/2 - 3, 6, 6);
+    }
+  });
+
+  powerups.forEach(p => {
+    ctx.fillStyle = p.ability.color;
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+  });
+
+  if (gameOver) {
+    ctx.fillStyle = '#fff';
+    ctx.font = '30px monospace';
+    ctx.fillText(enemies.every(e => !e.alive) ? 'YOU WIN!' : 'GAME OVER', 200, 250);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+}
+// Run game loop in a Web Worker so it keeps going in inactive tabs
+const workerCode = `setInterval(() => postMessage('tick'), 1000 / 60);`;
+const worker = new Worker(URL.createObjectURL(new Blob([workerCode])));
+worker.onmessage = loop;
+worker.onerror = () => setInterval(loop, 1000 / 60);
+</script>
+</body>
+</html>
